@@ -1,8 +1,6 @@
 # Loveble — языки любви и проявление привязанности для SillyTavern
 
-Расширение создаёт **записи лорбука** о том, как персонаж (или ты сама, как юзер) любит, проявляет привязанность и строит отношения. Записи короткие, плотные и работают как карточка поведения.
-
-*English: Loveble generates lorebook entries about love languages, emotional openness, physical affection, sexuality (18+ only), relationship style and breakups, for a character or the user persona. The UI is Russian by default with an English option; the entries are always written in English.*
+Расширение создаёт **записи лорбука** о том, как персонаж (юзер) любит, проявляет привязанность и строит отношения. Записи короткие, плотные и работают как карточка поведения.
 
 ## Разделы
 
@@ -35,7 +33,6 @@
 
 ## Прочее
 
-- Запросы идут через профиль Connection Manager, ключи API расширение не видит.
 - Темы: Румянец, Шалфей, Небо, Лагуна (тёмная), Авто (цвета Таверны).
 - Свобода додумывания: строго, баланс, смело. Размер записи задаётся в настройках.
 - Экспорт лорбука в JSON и копирование текста.
@@ -47,17 +44,3 @@
 ```
 https://github.com/Ayrissa/Loveble
 ```
-
-Нужны включённый Connection Manager и хотя бы один профиль подключения.
-
-## Структура
-
-```
-manifest.json   index.js   LICENSE   README.md
-```
-
-Вся логика и стили собраны в одном `index.js`.
-
-## Лицензия
-
-MIT
