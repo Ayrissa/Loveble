@@ -46,6 +46,13 @@ const D = {
         trNameH: 'Все записи подключаются, когда упомянуто имя.',
         trAlwaysH: 'Записи постоянно в контексте (тратят токены всегда).',
         sPosition: 'Позиция в промпте', posBefore: '↑ Перед описанием персонажа', posAfter: '↓ После описания персонажа',
+        sAttach: 'Привязывать лорбук к карточке персонажа',
+        sAttachH: 'Лорбук подключается к карточке как дополнительный (Additional Lorebooks). Работает для «Персонажа», найденного в Таверне. Основной лорбук карточки не затрагивается.',
+        attached: 'Привязан к карточке «{name}» как дополнительный.',
+        attachAlready: 'Уже привязан к карточке «{name}».',
+        attachPrimary: 'Это основной лорбук карточки «{name}», привязка не нужна.',
+        attachNone: 'Персонаж «{name}» не найден в Таверне: лорбук создан без привязки.',
+        attachFail: 'Лорбук создан, но привязать не удалось. Подключи его вручную: карточка → Additional Lorebooks.',
         sPattern: 'Шаблон названия лорбука', sPatternH: '{name} заменяется на имя. Одинаковое название у разных людей кладёт их в один лорбук.',
         thBlush: 'Румянец', thSage: 'Шалфей', thSky: 'Небо', thLagoon: 'Лагуна', thAuto: 'Авто',
         thAutoH: 'Авто подстраивается под цвета текущей темы Таверны.',
@@ -95,6 +102,13 @@ const D = {
         trNameH: 'All entries fire when the name is mentioned.',
         trAlwaysH: 'Entries are always in context (always spend tokens).',
         sPosition: 'Prompt position', posBefore: '↑ Before character definitions', posAfter: '↓ After character definitions',
+        sAttach: 'Attach the lorebook to the character card',
+        sAttachH: 'The lorebook is linked to the card as an additional one (Additional Lorebooks). Works for a "Character" found in SillyTavern. The card\'s primary lorebook is not touched.',
+        attached: 'Attached to the card "{name}" as an additional lorebook.',
+        attachAlready: 'Already attached to the card "{name}".',
+        attachPrimary: 'This is already the primary lorebook of "{name}", no attaching needed.',
+        attachNone: 'Character "{name}" was not found in SillyTavern: the lorebook was created without attaching.',
+        attachFail: 'The lorebook was created, but attaching failed. Link it manually: card → Additional Lorebooks.',
         sPattern: 'Lorebook name pattern', sPatternH: '{name} is replaced with the name. The same name for different people puts them into one lorebook.',
         thBlush: 'Blush', thSage: 'Sage', thSky: 'Sky', thLagoon: 'Lagoon', thAuto: 'Auto',
         thAutoH: 'Auto follows the colors of the current SillyTavern theme.',
@@ -239,6 +253,7 @@ const DEFAULTS = {
     entryWords: 120, maxResponse: 4200, creativity: 'balanced',
     keysLang: 'en', trigger: 'selective', position: 'before',
     bookPattern: 'Loveble - {name}',
+    attachToCard: false,
     draft: DEFAULT_DRAFT,
 };
 
@@ -485,6 +500,45 @@ async function saveBook(name, specs) {
     await writeBook(name, data);
     try { await c.updateWorldInfoList?.(); } catch { /* список обновится сам */ }
     return Object.keys(data.entries).length;
+}
+
+/** Модуль world-info.js Таверны: единственный способ дотянуться до world_info.charLore. */
+async function importWorldInfoModule() {
+    const urls = [];
+    try { urls.push(new URL('../../../world-info.js', import.meta.url).href); } catch { /* нет import.meta.url */ }
+    urls.push('/scripts/world-info.js');
+    let lastErr;
+    for (const u of urls) {
+        try { return await import(u); } catch (e) { lastErr = e; }
+    }
+    throw lastErr || new Error('world-info.js unavailable');
+}
+
+/**
+ * Привязывает лорбук к карточке как ДОПОЛНИТЕЛЬНЫЙ (world_info.charLore), основной лорбук карточки не трогает.
+ * Возвращает: 'attached' | 'already' | 'primary' | 'nochar'. При сбое бросает ошибку.
+ */
+async function attachToCharacter(d, book) {
+    const c = stctx();
+    const nm = mainName(d);
+    const list = c.characters || [];
+    let idx = list.findIndex((x, i) => x.name === nm && String(i) === String(c.characterId));
+    if (idx < 0) idx = list.findIndex(x => x.name === nm);
+    if (idx < 0 || !list[idx].avatar) return 'nochar';
+    const ch = list[idx];
+    if (ch.data?.extensions?.world === book) return 'primary';
+    const fileName = ch.avatar.replace(/\.[^/.]+$/, '');
+    const mod = await importWorldInfoModule();
+    const wi = mod.world_info;
+    if (!wi || typeof wi !== 'object') throw new Error('world_info unavailable');
+    if (!Array.isArray(wi.charLore)) wi.charLore = [];
+    let entry = wi.charLore.find(e => e.name === fileName);
+    if (!entry) { entry = { name: fileName, extraBooks: [] }; wi.charLore.push(entry); }
+    if (!Array.isArray(entry.extraBooks)) entry.extraBooks = [];
+    if (entry.extraBooks.includes(book)) return 'already';
+    entry.extraBooks.push(book);
+    c.saveSettingsDebounced();
+    return 'attached';
 }
 
 async function copyText(text) {
@@ -959,15 +1013,30 @@ async function doCreate() {
     const book = bookTitle(d);
     try {
         await saveBook(book, specs);
-        const msg = t('created', { book, n: specs.length });
-        setStatus(msg);
-        toast('success', msg);
     } catch (e) {
         console.error('[Loveble]', e);
         const msg = t('errBook', { msg: e.message });
         setStatus(msg, true);
         toast('error', msg);
+        return;
     }
+    let msg = t('created', { book, n: specs.length }), warn = false;
+    if (s.attachToCard && d.target === 'char') {
+        const name = mainName(d);
+        try {
+            const r = await attachToCharacter(d, book);
+            if (r === 'attached') msg += ` ${t('attached', { name })}`;
+            else if (r === 'already') msg += ` ${t('attachAlready', { name })}`;
+            else if (r === 'primary') msg += ` ${t('attachPrimary', { name })}`;
+            else { msg += ` ${t('attachNone', { name })}`; warn = true; }
+        } catch (e) {
+            console.error('[Loveble] attach failed', e);
+            msg += ` ${t('attachFail')}`;
+            warn = true;
+        }
+    }
+    setStatus(msg, warn);
+    toast(warn ? 'warning' : 'success', msg);
 }
 
 /* ───────────── Вкладка «Настройки» ───────────── */
@@ -1059,6 +1128,14 @@ function buildSettingsView() {
     const trHint = el('small', 'lv-note', hintOf(trMap, s.trigger));
     field(g, t('sTrigger'), select('trigger', [['selective', t('trSel')], ['topic', t('trTopic')], ['name', t('trName')], ['always', t('trAlways')]],
         (v) => { trHint.textContent = hintOf(trMap, v); })).appendChild(trHint);
+    const att = el('label', 'lv-check');
+    const attCb = document.createElement('input');
+    attCb.type = 'checkbox';
+    attCb.checked = !!s.attachToCard;
+    attCb.onchange = () => { s.attachToCard = attCb.checked; saveSettings(); };
+    att.append(attCb, el('span', '', t('sAttach')));
+    g.appendChild(att);
+    g.appendChild(el('small', 'lv-note', t('sAttachH')));
     field(g, t('sPosition'), select('position', [['before', t('posBefore')], ['after', t('posAfter')]]));
     const pat = el('input', 'lv-input-line');
     pat.type = 'text';
